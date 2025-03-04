@@ -1,1 +1,2 @@
 # qianli_auto_aim_611
+#此代码是611针对qianli_auto_aim的改进研究
