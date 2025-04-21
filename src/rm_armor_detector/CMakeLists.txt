@@ -30,6 +30,28 @@ if(USE_CUDA_DETCTOR)
     find_package(onnxruntime REQUIRED)
 endif()
 
+if(USE_TENSORRT_DETCTOR)
+    add_definitions(-DUSE_CUDA_DETCTOR)
+    # 设置默认的 tensorRT 根目录，如果用户没有手动提供
+    if(NOT ONNXRUNTIME_ROOTDIR)
+    if(WIN32)
+        # Windows 系统下设置默认的 ONNX Runtime 路径
+        set(ONNXRUNTIME_ROOTDIR "C:/Program Files (x86)/onnxruntime")
+    else()
+        # 非 Windows 系统下设置默认路径
+        set(ONNXRUNTIME_ROOTDIR "${CMAKE_SOURCE_DIR}/onnxruntime")
+    endif()
+    endif()
+    list(APPEND CMAKE_PREFIX_PATH "${ONNXRUNTIME_ROOTDIR}/lib64/cmake/onnxruntime")
+    # 添加包含路径
+    include_directories(
+    ${ONNXRUNTIME_ROOTDIR}/include
+    ${ONNXRUNTIME_ROOTDIR}/include/onnxruntime/core/session
+    ${OPENVINO_ROOTDIR}/runtime/include
+    )
+    find_package(onnxruntime REQUIRED)
+endif()
+
 if(USE_OPENVINO_DETCTOR)
     add_definitions(-DUSE_OPENVINO_DETCTOR)
     set(OpenVINO_LIBRARIES "/opt/openvino/runtime/lib/intel64/libopenvino.so")

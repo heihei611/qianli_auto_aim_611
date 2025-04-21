@@ -44,6 +44,22 @@ void ArmorDetectorNode::parameters_init()
         {
             RCLCPP_ERROR(this->get_logger(), "CreateSession failed: %s", ret);
         }
+    #elif defined(USE_TENSORRT_DETECTOR)
+        RCLCPP_INFO(this->get_logger(), "tensorRT detect mode!");
+        auto pkg_path = ament_index_cpp::get_package_share_directory("rm_armor_detector");
+        DL_INIT_PARAM params;
+        params.rectConfidenceThreshold = 0.1;//这里的前处理应该还需要改的
+        params.iouThreshold = 0.5;//同
+        params.modelPath = pkg_path + "/model/four_points_armor/armor.onnx";
+        params.imgSize = { 640, 640 };
+        params.tensorRTEnable = true;
+        tensorRT_detector_ = std::make_shared<tensorRTDetector>();
+        char* ret = tensorRT_detector_->CreateSession(params);
+        if (ret != RET_OK)
+        {
+            RCLCPP_ERROR(this->get_logger(), "CreateSession failed: %s", ret);
+        }
+         
     #elif defined(USE_OPENVINO_DETCTOR)
         RCLCPP_INFO(this->get_logger(), "Openvino detect mode!");
         auto pkg_path = ament_index_cpp::get_package_share_directory("rm_armor_detector");
