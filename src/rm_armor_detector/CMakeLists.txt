@@ -6,7 +6,9 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 option(USE_CUDA_DETCTOR "Use CUDA for detection" OFF)
+option(USE_TENSORRT_DETCTOR "Use TENSORRT for detection" OFF)
 option(USE_OPENVINO_DETCTOR "Use OpenVINO for detection" OFF)
+
 
 if(USE_CUDA_DETCTOR)
     add_definitions(-DUSE_CUDA_DETCTOR)
@@ -31,22 +33,22 @@ if(USE_CUDA_DETCTOR)
 endif()
 
 if(USE_TENSORRT_DETCTOR)
-    add_definitions(-DUSE_CUDA_DETCTOR)
+    add_definitions(-DUSE_TENSORRT_DETCTOR)
     # 设置默认的 tensorRT 根目录，如果用户没有手动提供
-    if(NOT ONNXRUNTIME_ROOTDIR)
+    if(NOT TENSORRT_ROOTDIR)
     if(WIN32)
         # Windows 系统下设置默认的 ONNX Runtime 路径
-        set(ONNXRUNTIME_ROOTDIR "C:/Program Files (x86)/onnxruntime")
+        set(TENSORRT_ROOTDIR "C:/Program Files (x86)/tensorrt")
     else()
         # 非 Windows 系统下设置默认路径
-        set(ONNXRUNTIME_ROOTDIR "${CMAKE_SOURCE_DIR}/onnxruntime")
+        set(TENSORRT_ROOTDIR "${CMAKE_SOURCE_DIR}/tensorrt")
     endif()
     endif()
-    list(APPEND CMAKE_PREFIX_PATH "${ONNXRUNTIME_ROOTDIR}/lib64/cmake/onnxruntime")
+    list(APPEND CMAKE_PREFIX_PATH "${TENSORRT_ROOTDIR}/lib64/cmake/tensorrt")
     # 添加包含路径
     include_directories(
-    ${ONNXRUNTIME_ROOTDIR}/include
-    ${ONNXRUNTIME_ROOTDIR}/include/onnxruntime/core/session
+    ${TENSORRT_ROOTDIR}/include
+    ${TENSORRT_ROOTDIR}/include/tensorrt/core/session
     ${OPENVINO_ROOTDIR}/runtime/include
     )
     find_package(onnxruntime REQUIRED)
@@ -70,6 +72,11 @@ ament_auto_find_build_dependencies()
 if(USE_CUDA_DETCTOR)
   ament_auto_add_library(${PROJECT_NAME} SHARED
     DIRECTORY src/detector_node src/cuda_detector.cpp
+  )
+  target_include_directories(${PROJECT_NAME} PUBLIC include/rm_armor_detector/detector_node include/rm_armor_detector)
+if(USE_TENSORRT_DETCTOR)
+  ament_auto_add_library(${PROJECT_NAME} SHARED
+    DIRECTORY src/detector_node src/tensorRT_detector.cpp
   )
   target_include_directories(${PROJECT_NAME} PUBLIC include/rm_armor_detector/detector_node include/rm_armor_detector)
 elseif(USE_OPENVINO_DETCTOR)

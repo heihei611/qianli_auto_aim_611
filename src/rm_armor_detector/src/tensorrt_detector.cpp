@@ -18,7 +18,7 @@
 // Define TRT entrypoints used in common code
 #define DEFINE_TRT_ENTRYPOINTS 1
 #define DEFINE_TRT_LEGACY_PARSER_ENTRYPOINT 0
-
+#include "tensorRT_detector.hpp"
 #include "argsParser.h"
 #include "buffers.h"
 #include "common.h"
@@ -41,36 +41,18 @@
 #include <rclcpp/rclcpp.hpp>
 
 using namespace nvinfer1;
-using samplesCommon::SampleUniquePtr;
+using tensorRTCommon::tensorRTUniquePtr;
 
-// 检测结果
-struct Detection {
-    float x1, y1, x2, y2;
-    float confidence;
-    int class_id;
-};
-
-struct DL_INIT_PARAM {
-    float rectConfidenceThreshold;
-    float iouThreshold;
-    std::string modelPath;
-    std::vector<int> imgSize;
-    bool cudaEnable;
-};
 
 class CudaDetector {
 public:
     char* CreateSession(const DL_INIT_PARAM& params);
 };
 
-//! \brief  The SampleOnnxYOLOv8 class implements the ONNX YOLOv8 sample
-//!
-//! \details It creates the network using an ONNX model
-//!
-class SampleOnnxYOLOv8
+class TensorRTDetector
 {
 public:
-    SampleOnnxYOLOv8(const DL_INIT_PARAM& params)
+    TensorRTDetector(const DL_INIT_PARAM& params)
         : mParams(params)
         , mRuntime(nullptr)
         , mEngine(nullptr)
@@ -106,6 +88,7 @@ private:
     //!
     //! \brief Reads the input  and stores the result in a managed buffer
     //!
+    
     bool processInput(const samplesCommon::BufferManager& buffers, const cv::Mat& input_image);
 
     //!
@@ -122,7 +105,7 @@ private:
 //!
 //! \return true if the engine was created successfully and false otherwise
 //!
-bool SampleOnnxYOLOv8::build()
+bool TensorRTDetector::build()
 {
     auto builder = SampleUniquePtr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(sample::gLogger.getTRTLogger()));
     if (!builder)
@@ -203,7 +186,7 @@ bool SampleOnnxYOLOv8::build()
 //!
 //! \param builder Pointer to the engine builder
 //!
-bool SampleOnnxYOLOv8::constructNetwork(SampleUniquePtr<nvinfer1::IBuilder>& builder,
+bool TensorRTDetector::constructNetwork(SampleUniquePtr<nvinfer1::IBuilder>& builder,
     SampleUniquePtr<nvinfer1::INetworkDefinition>& network, SampleUniquePtr<nvinfer1::IBuilderConfig>& config,
     SampleUniquePtr<nvonnxparser::IParser>& parser, SampleUniquePtr<nvinfer1::ITimingCache>& timingCache)
 {
@@ -229,7 +212,7 @@ bool SampleOnnxYOLOv8::constructNetwork(SampleUniquePtr<nvinfer1::IBuilder>& bui
 //! \details This function is the main execution function of the sample. It allocates the buffer,
 //!          sets inputs and executes the engine.
 //!
-bool SampleOnnxYOLOv8::infer(const cv::Mat& input_image)
+bool TensorRTDetector::infer(const cv::Mat& input_image)
 {
     // Create RAII buffer manager object
     samplesCommon::BufferManager buffers(mEngine);
@@ -280,7 +263,7 @@ bool SampleOnnxYOLOv8::infer(const cv::Mat& input_image)
 //!
 //! \brief Reads the input and stores the result in a managed buffer
 //!
-bool SampleOnnxYOLOv8::processInput(const samplesCommon::BufferManager& buffers, const cv::Mat& input_image)
+bool TensorRTDetector::processInput(const samplesCommon::BufferManager& buffers, const cv::Mat& input_image)
 {
     const int inputH = mParams.imgSize[1];
     const int inputW = mParams.imgSize[0];
@@ -319,7 +302,7 @@ bool SampleOnnxYOLOv8::processInput(const samplesCommon::BufferManager& buffers,
 //!
 //! \brief 后处理函数：解析输出、NMS 筛选
 //!
-std::vector<Detection> SampleOnnxYOLOv8::postprocess(float* output, int output_size, int original_w, int original_h)
+std::vector<Detection> TensorRTDetector::postprocess(float* output, int output_size, int original_w, int original_h)
 {
     const int num_classes = 80;  // YOLOv8 默认类别数
     const int stride = 4 + 1 + num_classes;  // 4坐标 + 1置信度 + num_classes类别概率
@@ -398,7 +381,7 @@ public:
         params.cudaEnable = true;
 
         RCLCPP_INFO(this->get_logger(), "Cuda detect mode!");
-        detector_ = std::make_shared<SampleOnnxYOLOv8>(params);
+        detector_ = std::make_shared<TensorRTDetector>(params);
         if (!detector_->build())
         {
             RCLCPP_ERROR(this->get_logger(), "Failed to build TensorRT engine!");
@@ -414,7 +397,7 @@ public:
     }
 
 private:
-    std::shared_ptr<SampleOnnxYOLOv8> detector_;
+    std::shared_ptr<TensorRTDetector> detector_;
 };
 
 

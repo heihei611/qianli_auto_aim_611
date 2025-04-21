@@ -482,6 +482,8 @@ void ArmorDetectorNode::image_callback(const sensor_msgs::msg::Image::SharedPtr 
     {
         #ifdef USE_CUDA_DETCTOR
             debug_deal(image, msg->header, cuda_detector_->armors_, decision_armor);
+        #ifdef USE_TENSORRT_DETCTOR
+            debug_deal(image, msg->header, tensorRT_detector_->armors_, decision_armor);
         #elif defined(USE_OPENVINO_DETCTOR)
             debug_deal(image, msg->header, openvino_detector_->armors_, decision_armor);
         #else
