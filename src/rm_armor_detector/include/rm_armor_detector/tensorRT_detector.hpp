@@ -2,7 +2,7 @@
 #include <vector>
 #include <opencv2/opencv.hpp>
 #include "armor.hpp"
-#include "NvInfer.h"
+#include "NvInfer.h"//api
 #include "buffers.h"
 #include "logger.h"
 
@@ -33,6 +33,5 @@ private:
     std::vector<Detection> postprocess(float* output, int output_size, int original_w, int original_h);
     void convertToArmor(const std::vector<Detection>& detections, int detect_color); // 新增颜色参数
 
-    // 工具函数
     cv::Mat letterboxImage(const cv::Mat& src, const cv::Size& target_size);
 };

@@ -10,83 +10,201 @@
  #include "logger.h"
  #include "parserOnnxConfig.h"
  
- #include <cuda_runtime_api.h>
+ #include <cuda_runtime_api.h>//api
  #include <opencv2/opencv.hpp>
  #include <rclcpp/rclcpp.hpp>
  
  using namespace nvinfer1;
- using samplesCommon::SampleUniquePtr;
+ using samplesCommon::SampleUniquePtr;//待定
  
+ class Logger : public nvinfer1::ILogger {
+	void log(Severity severity, const char* msg) noexcept override {
+		// suppress info-level messages
+		if (severity <= Severity::kWARNING)
+			std::cout << msg << std::endl;
+	}
+} logger;
+ // The TensorRTDetector class implementation
+//  bool TensorRTDetector::build() {
+//      auto builder = SampleUniquePtr<IBuilder>(createInferBuilder(sample::gLogger.getTRTLogger()));
+//      auto builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(logger));
+// // network definition
+//      if (!builder) return false;
+ 
+//      auto network = SampleUniquePtr<INetworkDefinition>(builder->createNetworkV2(0));
+//      auto config = SampleUniquePtr<IBuilderConfig>(builder->createBuilderConfig());
+//      auto parser = SampleUniquePtr<nvonnxparser::IParser>(
+//          nvonnxparser::createParser(*network, sample::gLogger.getTRTLogger())
+//      );
+ 
+//      if (!parser->parseFromFile(mParams.modelPath.c_str(), static_cast<int>(sample::gLogger.getReportableSeverity()))) {
+//          return false;
+//      }
+ 
+//      if (mParams.cudaEnable) {
+//          config->setFlag(BuilderFlag::kGPU_FALLBACK);
+//      }
+ 
+//      auto profileStream = samplesCommon::makeCudaStream();
+//      if (!profileStream) return false;
+//      config->setProfileStream(*profileStream);
+ 
+//      SampleUniquePtr<IHostMemory> plan = builder->buildSerializedNetwork(*network, *config);
+//      if (!plan) return false;
+ 
+//      mRuntime = std::shared_ptr<IRuntime>(createInferRuntime(sample::gLogger.getTRTLogger()));
+//      mEngine = std::shared_ptr<ICudaEngine>(
+//          mRuntime->deserializeCudaEngine(plan->data(), plan->size()), 
+//          samplesCommon::InferDeleter()
+//      );
+ 
+//      ASSERT(network->getNbInputs() == 1);
+//      mInputDims = network->getInput(0)->getDimensions();
+//      ASSERT(mInputDims.nbDims == 4);
+ 
+//      ASSERT(network->getNbOutputs() == 1);
+//      mOutputDims = network->getOutput(0)->getDimensions();
+//      ASSERT(mOutputDims.nbDims == 3);
+ 
+//      return true;
+ //}
+ bool OnnxTensorRTModelGlandceil::build()
+{
+  std::ifstream f(this->mengine_file_path.c_str());
+  bool fileflag = f.good();
+  if (fileflag)
+  {
+    initLibNvInferPlugins(&sample::gLogger.getTRTLogger(), "");
+    std::cout << "Loading TensorRT engine from plan file..." << std::endl;
+    std::ifstream file(this->mengine_file_path.c_str(), std::ios::in | std::ios::binary);
+    file.seekg(0, file.end);
+    size_t size = file.tellg();
+    file.seekg(0, file.beg);
 
- //! \brief  The TensorRTDetector class implementation
- bool TensorRTDetector::build() {
-     auto builder = SampleUniquePtr<IBuilder>(createInferBuilder(sample::gLogger.getTRTLogger()));
-     if (!builder) return false;
- 
-     auto network = SampleUniquePtr<INetworkDefinition>(builder->createNetworkV2(0));
-     auto config = SampleUniquePtr<IBuilderConfig>(builder->createBuilderConfig());
-     auto parser = SampleUniquePtr<nvonnxparser::IParser>(
-         nvonnxparser::createParser(*network, sample::gLogger.getTRTLogger())
-     );
- 
-     if (!parser->parseFromFile(mParams.modelPath.c_str(), static_cast<int>(sample::gLogger.getReportableSeverity()))) {
-         return false;
-     }
- 
-     if (mParams.cudaEnable) {
-         config->setFlag(BuilderFlag::kGPU_FALLBACK);
-     }
- 
-     auto profileStream = samplesCommon::makeCudaStream();
-     if (!profileStream) return false;
-     config->setProfileStream(*profileStream);
- 
-     SampleUniquePtr<IHostMemory> plan = builder->buildSerializedNetwork(*network, *config);
-     if (!plan) return false;
- 
-     mRuntime = std::shared_ptr<IRuntime>(createInferRuntime(sample::gLogger.getTRTLogger()));
-     mEngine = std::shared_ptr<ICudaEngine>(
-         mRuntime->deserializeCudaEngine(plan->data(), plan->size()), 
-         samplesCommon::InferDeleter()
-     );
- 
-     ASSERT(network->getNbInputs() == 1);
-     mInputDims = network->getInput(0)->getDimensions();
-     ASSERT(mInputDims.nbDims == 4);
- 
-     ASSERT(network->getNbOutputs() == 1);
-     mOutputDims = network->getOutput(0)->getDimensions();
-     ASSERT(mOutputDims.nbDims == 3);
- 
-     return true;
- }
- 
+    auto buffer = std::unique_ptr<char[]>(new char[size]);
+    file.read(buffer.get(), size);
+    file.close();
+
+    IRuntime* runtime = createInferRuntime(sample::gLogger.getTRTLogger());
+    ICudaEngine* engine = runtime->deserializeCudaEngine(buffer.get(), size);
+    this->mEngine = std::shared_ptr<nvinfer1::ICudaEngine>(engine, samplesCommon::InferDeleter());
+  }
+  else
+  {
+    auto builder = SampleUniquePtr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(sample::gLogger.getTRTLogger()));
+    builder->setMaxBatchSize(this->mbatchSize);
+    if (!builder)
+    {
+      return false;
+    }
+
+    const auto explicitBatch = 1U << static_cast<uint32_t>(NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
+    auto network = SampleUniquePtr<nvinfer1::INetworkDefinition>(builder->createNetworkV2(explicitBatch));
+    if (!network)
+    {
+      return false;
+    }
+
+    auto config = SampleUniquePtr<nvinfer1::IBuilderConfig>(builder->createBuilderConfig());
+    config->setMaxWorkspaceSize(1 << 30);//256M
+    if (!config)
+    {
+      return false;
+    }
+
+    auto parser
+      = SampleUniquePtr<nvonnxparser::IParser>(nvonnxparser::createParser(*network, sample::gLogger.getTRTLogger()));
+    if (!parser)
+    {
+      return false;
+    }
+
+    auto constructed = constructNetwork(builder, network, config, parser);
+    if (!constructed)
+    {
+      return false;
+    }
+
+    // CUDA stream used for profiling by the builder.
+    auto profileStream = samplesCommon::makeCudaStream();
+    if (!profileStream)
+    {
+      return false;
+    }
+    config->setProfileStream(*profileStream);
+
+    SampleUniquePtr<IHostMemory> plan{ builder->buildSerializedNetwork(*network, *config) };
+    if (!plan)
+    {
+      return false;
+    }
+
+    SampleUniquePtr<IRuntime> runtime{ createInferRuntime(sample::gLogger.getTRTLogger()) };
+    if (!runtime)
+    {
+      return false;
+    }
+
+    this->mEngine = std::shared_ptr<nvinfer1::ICudaEngine>(runtime->deserializeCudaEngine(plan->data(), plan->size()), samplesCommon::InferDeleter());
+    if (!this->mEngine)
+    {
+      return false;
+    }
+    //save serialize mode to file
+    std::ofstream f(this->mengine_file_path, std::ios::out | std::ios::binary);
+    f.write(reinterpret_cast<const char*>(plan->data()), plan->size());
+    f.close();
+  }
+  this->prepare();
+  return true;
+}
+
+//model转换为engine
+bool OnnxTensorRTModelGlandceil::prepare()
+{
+  this->mcontext = SampleUniquePtr<nvinfer1::IExecutionContext>(this->mEngine->createExecutionContext());
+  /*this->mcontext->setOptimizationProfileAsync(0, this->mstream);
+  cudaStreamCreate(&this->mstream);*/
+  if (!this->mcontext)
+  {
+    return false;
+  }
+  return true;
+}
+
+ //对输入输出buffer进行分配
+samplesCommon::BufferManager mbuffers(this->mEngine);
+
  bool TensorRTDetector::infer(const cv::Mat& input_image) {
-     samplesCommon::BufferManager buffers(mEngine);
-     auto context = SampleUniquePtr<IExecutionContext>(mEngine->createExecutionContext());
-     if (!context) return false;
- 
-     for (int32_t i = 0; i < mEngine->getNbIOTensors(); i++) {
-         context->setTensorAddress(mEngine->getIOTensorName(i), buffers.getDeviceBuffer(mEngine->getIOTensorName(i)));
-     }
- 
-     if (!processInput(buffers, input_image)) return false;
-     buffers.copyInputToDevice();
-     
-     bool status = context->executeV2(buffers.getDeviceBindings().data());
-     if (!status) return false;
-     
-     buffers.copyOutputToHost();
- 
-     float* output = static_cast<float*>(buffers.getHostBuffer(mEngine->getIOTensorName(1))); // 假设输出索引为1
-     int output_size = mOutputDims.d[1] * mOutputDims.d[2];
-     std::vector<Detection> detections = postprocess(output, output_size, input_image.cols, input_image.rows);
- 
-     // 转换为 Armor 结构体（假设头文件已声明相关方法）
-     // convertToArmor(detections, detect_color); // 需在头文件声明此方法
- 
-     return true;
- }
+    samplesCommon::BufferManager buffers(mEngine);
+    auto context = SampleUniquePtr<IExecutionContext>(mEngine->createExecutionContext());
+    if (!context) return false;
+
+    for (int32_t i = 0; i < mEngine->getNbIOTensors(); i++) {
+        context->setTensorAddress(mEngine->getIOTensorName(i), buffers.getDeviceBuffer(mEngine->getIOTensorName(i)));
+    }
+
+    if (!processInput(buffers, input_image)) return false;
+    buffers.copyInputToDevice();
+
+    bool status = context->executeV2(buffers.getDeviceBindings().data());
+    if (!status) return false;
+
+    buffers.copyOutputToHost();
+
+    // 根据输出名称获取输出数据
+    const char* output_name = mEngine->getIOTensorName(0);  // 假设只有一个输出，索引为0
+    float* output = static_cast<float*>(buffers.getHostBuffer(output_name)); 
+    int num_detections = mOutputDims.d[1];
+    int num_attributes = mOutputDims.d[2];
+    int output_size = num_detections * num_attributes;
+    std::vector<Detection> detections = postprocess(output, output_size, input_image.cols, input_image.rows);
+
+    // 转换为 Armor 结构体（假设头文件已声明相关方法）
+    // convertToArmor(detections, detect_color); // 需在头文件声明此方法
+
+    return true;
+}
  
  bool TensorRTDetector::processInput(const samplesCommon::BufferManager& buffers, const cv::Mat& input_image) {
      const int inputH = mParams.imgSize[1], inputW = mParams.imgSize[0];
@@ -107,7 +225,7 @@
  }
  
  std::vector<Detection> TensorRTDetector::postprocess(float* output, int output_size, int original_w, int original_h) {
-     const int num_classes = 80;
+     const int num_classes = 80;//这个地方需要修改，onnx模型输出不是80
      const int stride = 4 + 1 + num_classes;
      std::vector<Detection> detections;
  
@@ -146,22 +264,22 @@
      return results;
  }
  
- // 节点实现
- ArmorDetectorNode::ArmorDetectorNode() : Node("armor_detector_node") {
-     auto pkg_path = ament_index_cpp::get_package_share_directory("rm_armor_detector");
-     DL_INIT_PARAM params;
-     params.rectConfidenceThreshold = 0.1;
-     params.iouThreshold = 0.5;
-     params.modelPath = pkg_path + "/model/four_points_armor/armor.onnx";
-     params.imgSize = {640, 640};
-     params.cudaEnable = true;
+ // 节点实现,应该在node节点代码里
+//  ArmorDetectorNode::ArmorDetectorNode() : Node("armor_detector_node") {
+//      auto pkg_path = ament_index_cpp::get_package_share_directory("rm_armor_detector");
+//      DL_INIT_PARAM params;
+//      params.rectConfidenceThreshold = 0.1;
+//      params.iouThreshold = 0.5;
+//      params.modelPath = pkg_path + "/model/four_points_armor/armor.onnx";
+//      params.imgSize = {640, 640};
+//      params.cudaEnable = true;
  
-     RCLCPP_INFO(this->get_logger(), "TensorRT detect mode!");
-     detector_ = std::make_shared<TensorRTDetector>(params);
-     if (!detector_->build()) {
-         RCLCPP_ERROR(this->get_logger(), "Failed to build TensorRT engine!");
-     }
- }
+//      RCLCPP_INFO(this->get_logger(), "TensorRT detect mode!");
+//      detector_ = std::make_shared<TensorRTDetector>(params);
+//      if (!detector_->build()) {
+//          RCLCPP_ERROR(this->get_logger(), "Failed to build TensorRT engine!");
+//      }
+//  }
  
  void ArmorDetectorNode::detect(const cv::Mat& input_image) {
      if (!detector_->infer(input_image)) {
