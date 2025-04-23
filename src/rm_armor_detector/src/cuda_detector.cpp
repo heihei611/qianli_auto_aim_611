@@ -50,7 +50,7 @@ char* CudaDetector::CreateSession(DL_INIT_PARAM& iParams)
         {
             OrtCUDAProviderOptions cudaOption;
             cudaOption.device_id = 0;
-            sessionOption.AppendExecutionProvider_CUDA(cudaOption);
+            sessionOption.AppendExecutionProvider_CUDA(cudaOption);//这里会选择本地gpu
         }
         sessionOption.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         sessionOption.SetIntraOpNumThreads(iParams.intraOpNumThreads);
