@@ -16,17 +16,24 @@
  
  using namespace nvinfer1;
  using samplesCommon::SampleUniquePtr;//待定
- 
- class Logger : public nvinfer1::ILogger {
-	void log(Severity severity, const char* msg) noexcept override {
-		// suppress info-level messages
-		if (severity <= Severity::kWARNING)
-			std::cout << msg << std::endl;
-	}
-} logger;
+ //使用线程锁来保护日志输出
+ std::mutex log_mutex;
+ void log(Severity severity, const char* msg) noexcept {
+     if (severity <= Severity::kWARNING) {
+         std::lock_guard<std::mutex> lock(log_mutex);
+         std::cout << msg << std::endl;
+     }
+ }
+ //  class Logger : public nvinfer1::ILogger {
+ // 	void log(Severity severity, const char* msg) noexcept override {
+ // 		// suppress info-level messages
+// 		if (severity <= Severity::kWARNING)
+// 			std::cout << msg << std::endl;
+// 	}
+// } logger;
  // The TensorRTDetector class implementation
 //  bool TensorRTDetector::build() {
-//      auto builder = SampleUniquePtr<IBuilder>(createInferBuilder(sample::gLogger.getTRTLogger()));
+      auto builder = SampleUniquePtr<IBuilder>(createInferBuilder(sample::gLogger.getTRTLogger()));
 //      auto builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(logger));
 // // network definition
 //      if (!builder) return false;
@@ -72,13 +79,13 @@
  //构建引擎
  bool TensorRTDetector::build()
 {
-  std::ifstream f(this->mengine_file_path.c_str());
+  std::ifstream f(this->engine_file_path.c_str());
   bool fileflag = f.good();
   if (fileflag)
   {
     initLibNvInferPlugins(&sample::gLogger.getTRTLogger(), "");
     std::cout << "Loading TensorRT engine from plan file..." << std::endl;
-    std::ifstream file(this->mengine_file_path.c_str(), std::ios::in | std::ios::binary);
+    std::ifstream file(this->engine_file_path.c_str(), std::ios::in | std::ios::binary);
     file.seekg(0, file.end);
     size_t size = file.tellg();
     file.seekg(0, file.beg);
@@ -87,9 +94,13 @@
     file.read(buffer.get(), size);
     file.close();
 
-    IRuntime* runtime = createInferRuntime(sample::gLogger.getTRTLogger());
-    ICudaEngine* engine = runtime->deserializeCudaEngine(buffer.get(), size);
-    this->mEngine = std::shared_ptr<nvinfer1::ICudaEngine>(engine, samplesCommon::InferDeleter());
+    auto runtime = SampleUniquePtr<IRuntime>(createInferRuntime(sample::gLogger.getTRTLogger()));
+    auto engine = SampleUniquePtr<ICudaEngine>(runtime->deserializeCudaEngine(buffer.get(), size));
+    // IRuntime* runtime = createInferRuntime(sample::gLogger.getTRTLogger());
+    // auto engine = runtime->deserializeCudaEngine(buffer.get(), size);
+    this->Engine = std::shared_ptr<nvinfer1::ICudaEngine>(engine, [buffer = std::move(buffer)](nvinfer1::ICudaEngine* ptr) {
+      ptr->destroy();
+    });
   }
   else
   {
@@ -131,6 +142,7 @@
     auto profileStream = samplesCommon::makeCudaStream();
     if (!profileStream)
     {
+      std::cout << "Failed to create CUDA stream for profiling." << std::endl;
       return false;
     }
     config->setProfileStream(*profileStream);
@@ -138,22 +150,33 @@
     SampleUniquePtr<IHostMemory> plan{ builder->buildSerializedNetwork(*network, *config) };
     if (!plan)
     {
+      std::cout << "Failed to build serialized network." << std::endl;
       return false;
     }
 
     SampleUniquePtr<IRuntime> runtime{ createInferRuntime(sample::gLogger.getTRTLogger()) };
-    if (!runtime)
-    {
+    // if (!runtime)
+    // {
+    //   return false;
+    // }
+    try {
+      std::ifstream file(this->engine_file_path, std::ios::binary);
+      if (!file) {
+          throw std::runtime_error("Failed to open engine file.");
+      }
+    
+  } catch (const std::exception& e) {
+      std::cerr << "Error: " << e.what() << std::endl;
       return false;
-    }
+  }
 
-    this->mEngine = std::shared_ptr<nvinfer1::ICudaEngine>(runtime->deserializeCudaEngine(plan->data(), plan->size()), samplesCommon::InferDeleter());
-    if (!this->mEngine)
+    this->Engine = std::shared_ptr<nvinfer1::ICudaEngine>(runtime->deserializeCudaEngine(plan->data(), plan->size()), samplesCommon::InferDeleter());
+    if (!this->Engine)
     {
       return false;
     }
     //save serialize mode to file
-    std::ofstream f(this->mengine_file_path, std::ios::out | std::ios::binary);
+    std::ofstream f(this->engine_file_path, std::ios::out | std::ios::binary);
     f.write(reinterpret_cast<const char*>(plan->data()), plan->size());
     f.close();
   }
@@ -164,7 +187,7 @@
 //model转换为engine
 bool TensorRTDetector::prepare()
 {
-  this->mcontext = SampleUniquePtr<nvinfer1::IExecutionContext>(this->mEngine->createExecutionContext());
+  this->mcontext = SampleUniquePtr<nvinfer1::IExecutionContext>(this->Engine->createExecutionContext());
   /*this->mcontext->setOptimizationProfileAsync(0, this->mstream);
   cudaStreamCreate(&this->mstream);*/
   if (!this->mcontext)
@@ -175,27 +198,32 @@ bool TensorRTDetector::prepare()
 }
 
  //对输入输出buffer进行分配
-samplesCommon::BufferManager mbuffers(this->mEngine);
+samplesCommon::BufferManager buffers(this->Engine);
 
  bool TensorRTDetector::infer(const cv::Mat& input_image) {
-    samplesCommon::BufferManager buffers(mEngine);
-    auto context = SampleUniquePtr<IExecutionContext>(mEngine->createExecutionContext());
+    samplesCommon::BufferManager buffers(this->Engine);
+    auto context = SampleUniquePtr<IExecutionContext>(this->Engine->createExecutionContext());
     if (!context) return false;
 
-    for (int32_t i = 0; i < mEngine->getNbIOTensors(); i++) {
-        context->setTensorAddress(mEngine->getIOTensorName(i), buffers.getDeviceBuffer(mEngine->getIOTensorName(i)));
+    for (int32_t i = 0; i < this->Engine->getNbIOTensors(); i++) {
+        context->setTensorAddress(this->Engine->getIOTensorName(i), buffers.getDeviceBuffer(this->Engine->getIOTensorName(i)));
+        int num_outputs = this->Engine->getNbIOTensors();
+        std::cout << "Number of output tensors: " << num_outputs << std::endl;
     }
 
     if (!processInput(buffers, input_image)) return false;
     buffers.copyInputToDevice();
 
     bool status = context->executeV2(buffers.getDeviceBindings().data());
-    if (!status) return false;
+    if (!status) {
+        std::cout << "Failed to execute inference." << std::endl;
+        return false;
+    }
 
     buffers.copyOutputToHost();
 
     // 根据输出名称获取输出数据
-    const char* output_name = mEngine->getIOTensorName(22);  // 假设只有一个输出，索引为0
+    const char* output_name = this->Engine->getIOTensorName(0);  // 假设只有一个输出，索引为0
     float* output = static_cast<float*>(buffers.getHostBuffer(output_name)); 
     int num_detections = mOutputDims.d[1];
     int num_attributes = mOutputDims.d[2];
@@ -208,15 +236,15 @@ samplesCommon::BufferManager mbuffers(this->mEngine);
 void LetterBox(const cv::Mat& image, cv::Mat& outImage, cv::Vec4d& params, const cv::Size& newShape,
   bool autoShape, bool scaleFill, bool scaleUp, int stride, const cv::Scalar& color)
  {
-  if (false) {
-   int maxLen = MAX(image.rows, image.cols);
-   outImage = Mat::zeros(Size(maxLen, maxLen), CV_8UC3);
-   image.copyTo(outImage(Rect(0, 0, image.cols, image.rows)));
-   params[0] = 1;
-   params[1] = 1;
-   params[3] = 0;
-   params[2] = 0;
-  }
+  // if (false) {
+  //  int maxLen = MAX(image.rows, image.cols);
+  //  outImage = Mat::zeros(Size(maxLen, maxLen), CV_8UC3);
+  //  image.copyTo(outImage(Rect(0, 0, image.cols, image.rows)));
+  //  params[0] = 1;
+  //  params[1] = 1;
+  //  params[3] = 0;
+  //  params[2] = 0;
+  // }
  
   cv::Size shape = image.size();
   float r = std::min((float)newShape.height / (float)shape.height,
@@ -271,19 +299,22 @@ void LetterBox(const cv::Mat& image, cv::Mat& outImage, cv::Vec4d& params, const
 
  bool TensorRTDetector::processInput(const samplesCommon::BufferManager& buffers, const cv::Mat& input_image) {
      const int inputH = mParams.imgSize[1], inputW = mParams.imgSize[0];
-     cv::Mat letterbox = letterboxImage(input_image, cv::Size(inputW, inputH));
+     cv::Mat letterboxImage = letterbox(input_image, cv::Size(inputW, inputH));
      cv::Mat rgb_img;
-     cv::cvtColor(letterbox, rgb_img, cv::COLOR_BGR2RGB);
+     cv::cvtColor(letterboxImage, rgb_img, cv::COLOR_BGR2RGB);
      rgb_img.convertTo(rgb_img, CV_32F, 1/255.0f);
  //填充到输入缓冲区（NCHW格式）
-     float* hostData = static_cast<float*>(buffers.getHostBuffer(mEngine->getIOTensorName(0)));
-     for (int c = 0; c < 3; ++c) {
-         for (int h = 0; h < inputH; ++h) {
-             for (int w = 0; w < inputW; ++w) {
-                 hostData[c * inputH * inputW + h * inputW + w] = rgb_img.at<cv::Vec3f>(h, w)[c];
-             }
-         }
-     }
+    //  float* hostData = static_cast<float*>(buffers.getHostBuffer(this->Engine->getIOTensorName(0)));
+    //  for (int c = 0; c < 3; ++c) {
+    //      for (int h = 0; h < inputH; ++h) {
+    //          for (int w = 0; w < inputW; ++w) {
+    //              hostData[c * inputH * inputW + h * inputW + w] = rgb_img.at<cv::Vec3f>(h, w)[c];
+    //          }
+    //      }
+    //使用cv::Mat指针操作数据内存
+    float* hostData = static_cast<float*>(buffers.getHostBuffer(this->Engine->getIOTensorName(0)));
+std::memcpy(hostData, rgb_img.data, inputH * inputW * 3 * sizeof(float));
+     //}
      return true;
  }
  
@@ -334,7 +365,8 @@ std::vector<Detection> TensorRTDetector::postprocess(float (&rst)[1][84][8400], 
  static const float score_threshold = 0.6;
     static const float nms_threshold = 0.45;
     std::vector<int> indices;
-
+    int num_anchors = mOutputDims.d[2];
+    int num_classes = mOutputDims.d[1] - 4; // 假设前4个是坐标
  for(int Anchors=0 ;Anchors < 8400; Anchors++)
  {
   float max_score = 0.0;
@@ -364,7 +396,53 @@ std::vector<Detection> TensorRTDetector::postprocess(float (&rst)[1][84][8400], 
    det_rst.emplace_back(max_score_det);
   }
  }
+ auto outputTensor = session->Run(options, inputNodeNames.data(), &inputTensor, 1, outputNodeNames.data(),outputNodeNames.size());
+ float* pdata = outputTensor.front().GetTensorMutableData<float>();
+cv::Mat output_buffer(outputTensor.front().GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().at(1)
+                                     , outputTensor.front().GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().at(2), CV_32FC1, pdata);
 
+ std::vector<int> class_number_ids;
+ std::vector<float> class_number_scores;
+ std::vector<int> class_color_ids;
+ std::vector<float> class_color_scores;
+ std::vector<cv::Rect> boxes;
+ std::vector<std::vector<cv::Point2f>> four_points_vec;
+ for(int i = 1;i<output_buffer.rows;i++)
+	{
+		if(output_buffer.at<float>(i, 8) < CONFIDENCE_THRESHOLD_)
+            {
+                continue;
+            }
+            cv::Mat xyxyxyxy_boxes_mat = output_buffer.row(i).colRange(0,8);
+            cv::Mat color_scores_mat = output_buffer.row(i).colRange(9,13);
+            cv::Mat number_scores_mat = output_buffer.row(i).colRange(13,22);
+            cv::Point number_id_point;
+            cv::Point color_id_point;
+            double maxNumberScore;
+            double maxColorScore;
+            cv::minMaxLoc(number_scores_mat, 0, &maxNumberScore, 0, &number_id_point);
+            cv::minMaxLoc(color_scores_mat, 0, &maxColorScore, 0, &color_id_point);
+            maxNumberScore = sigmoid(maxNumberScore);
+            maxColorScore = sigmoid(maxColorScore);
+            if(maxNumberScore > SCORE_THRESHOLD_ && maxColorScore > COLOR_THRESHOLD_)
+            {
+                int class_number = number_id_point.x;
+                float class_number_score = maxNumberScore;
+                int class_color = color_id_point.x;
+                if(class_color == 0 && detect_color == 0) // blue
+                {
+                }
+                else if(class_color == 1 && detect_color == 1) // red
+                {
+                }
+                else
+                {
+                    continue;
+                }
+            }
+        }
+  }
+// ——————————————————————————————————————————NMS分界————————————————————————————————————————————————————————
  cv::dnn::NMSBoxes(boxes, scores, score_threshold, nms_threshold, indices);
 
  for (int i = 0; i < indices.size(); i++) {
